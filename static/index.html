@@ -13,10 +13,7 @@
     <header class="top-navbar">
       <div class="nav-brand">
         <div class="brand-icon">🎓</div>
-        <div>
-          <div class="brand-title">✦ OmniStudy</div>
-          <div class="brand-subtitle">notion × obsidian workspace</div>
-        </div>
+        <div class="brand-title">✦ OmniStudy</div>
       </div>
 
       <div class="nav-actions">
@@ -24,11 +21,6 @@
         <div class="status-pill" id="global-save-pill" title="Every change is instantly preserved in local storage and IndexedDB">
           <span class="status-dot"></span>
           <span id="save-status-text">Auto-saved</span>
-        </div>
-
-        <!-- Study Streak -->
-        <div class="status-pill badge-streak" title="Daily study streak">
-          🔥 5-Day Streak
         </div>
 
         <!-- Followed Creators Feed Toggle -->
@@ -59,9 +51,17 @@
             <span class="nav-item-icon">📝</span>
             <span>Notes & Docs</span>
           </button>
+          <button class="nav-item" data-view="view-bits">
+            <span class="nav-item-icon">💡</span>
+            <span>Bits</span>
+          </button>
           <button class="nav-item" data-view="view-voice">
             <span class="nav-item-icon">🎙️</span>
             <span>Voice Studio</span>
+          </button>
+          <button class="nav-item" data-view="view-brancher">
+            <span class="nav-item-icon">🌿</span>
+            <span>Brancher View</span>
           </button>
 
           <div class="sidebar-section-title">Document & Tools</div>
@@ -181,7 +181,7 @@
                 <p class="page-desc">Select a subject tile to open its notes, or create a new subject as you type.</p>
               </div>
               <div style="display: flex; gap: 8px; align-items: center;">
-                <button class="btn-secondary" id="manage-subjects-btn" title="Select and delete subject tiles">☑️ Select Tiles</button>
+                <button class="btn-secondary" id="manage-subjects-btn" title="Select and delete subject tiles" style="display: none;">☑️ Select Tiles</button>
                 <button class="btn-primary" id="open-new-subject-btn">+ Add Subject Tile</button>
               </div>
             </div>
@@ -226,6 +226,16 @@
               </div>
             </div>
 
+            <!-- Subject Branch Navigation & Filter Bar -->
+            <div class="subject-branch-bar" id="subject-branch-bar">
+              <div class="branch-bar-left">
+                <span class="branch-bar-icon">🌿</span>
+                <span class="branch-bar-title">Topic Branches:</span>
+                <div class="branch-pill-list" id="subject-branch-pills"></div>
+              </div>
+              <button type="button" class="btn-sm btn-secondary" id="notes-add-branch-btn" title="Add a new topic branch under this subject">+ Add Branch</button>
+            </div>
+
             <div class="notes-container">
               <!-- Sidebar: notes list inside active subject -->
               <div class="card notes-sidebar">
@@ -248,9 +258,15 @@
                   </div>
                 </div>
 
-                <div style="display: flex; gap: 12px;">
-                  <input type="text" class="input-field" id="note-edit-category" placeholder="Subject / Category" style="max-width: 200px;">
-                  <input type="text" class="input-field" id="note-edit-tags" placeholder="Tags (comma separated, e.g. formulas, exam-prep)">
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                  <input type="text" class="input-field" id="note-edit-category" placeholder="Subject" style="max-width: 150px;" readonly title="Parent Subject">
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <label for="note-edit-branch" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600;">🌿 Branch:</label>
+                    <select class="input-field" id="note-edit-branch" style="min-width: 170px;">
+                      <option value="">General (No Branch)</option>
+                    </select>
+                  </div>
+                  <input type="text" class="input-field" id="note-edit-tags" placeholder="Tags (comma separated, e.g. formulas, exam-prep)" style="flex: 1; min-width: 180px;">
                 </div>
 
                 <!-- Note Editor Actions, Formatting & PDF Page Size Toolbar -->
@@ -313,7 +329,7 @@
                   </div>
                 </div>
 
-                <div class="note-editor-wrapper" style="position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0;">
+                <div class="note-editor-wrapper" style="position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0; max-height: 100%; overflow: hidden;">
                   <div class="note-editor-body" id="note-edit-content" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" data-placeholder="Start typing your rich notes here... Format with Bold, Italics, Underline, or Highlight directly while typing (Ctrl+B, Ctrl+I, Ctrl+U). Right-click for options."></div>
                   <div class="note-editor-body note-preview-body" id="note-preview-content" style="display: none; overflow-y: auto;"></div>
 
@@ -339,6 +355,78 @@
                 </div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <!-- BITS: INTELLIGENT CONCEPT EXTRACTION & CHAPTER-WISE REVIEW -->
+        <section id="view-bits" class="view-panel">
+          <div class="page-header">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <h1 class="page-title">Bits</h1>
+                <span class="badge" style="background: rgba(124, 58, 237, 0.15); color: var(--primary); border: 1px solid rgba(124, 58, 237, 0.3);">✨ AI Concept Extractor</span>
+              </div>
+              <p class="page-desc">Clear, concise, and chapter-wise bullet points automatically synthesized from your Notes and Documents for high-yield review.</p>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <span id="bits-save-status" style="font-size: 0.78rem; color: var(--text-muted); opacity: 0.7; transition: opacity 0.3s;">Saved</span>
+              <button class="btn-secondary" id="bits-export-btn" title="Export all Bits as Markdown study summary">📑 Export Bits</button>
+              <button class="btn-secondary" id="bits-refresh-btn" title="Re-extract and update Bits from your latest Notes & Documents">✨ Refresh Bits</button>
+              <button class="btn-primary" id="bits-save-btn">💾 Save Changes</button>
+            </div>
+          </div>
+
+          <!-- Note Update Notification Banner -->
+          <div id="bits-update-banner" style="display: none; align-items: center; justify-content: space-between; padding: 10px 16px; margin-bottom: 16px; background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: var(--radius-sm); font-size: 0.85rem;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span>⚡</span>
+              <span>Notes have been updated in your workspace. Would you like to refresh your extracted Bits?</span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn-primary" style="padding: 4px 12px; font-size: 0.78rem;" onclick="document.getElementById('bits-refresh-btn')?.click(); this.closest('#bits-update-banner').style.display='none';">Update Bits</button>
+              <button class="btn-secondary" style="padding: 4px 10px; font-size: 0.78rem;" onclick="this.closest('#bits-update-banner').style.display='none';">Dismiss</button>
+            </div>
+          </div>
+
+          <!-- Quick Stats Bar -->
+          <div class="grid-3" style="margin-bottom: 18px;">
+            <div class="card stat-card" style="padding: 14px 18px;">
+              <div class="stat-icon" style="background: rgba(124, 58, 237, 0.15); color: #8b5cf6;">📚</div>
+              <div>
+                <div class="stat-val" id="bits-total-chapters">0</div>
+                <div class="stat-label">Chapters Synthesized</div>
+              </div>
+            </div>
+            <div class="card stat-card" style="padding: 14px 18px;">
+              <div class="stat-icon" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">💡</div>
+              <div>
+                <div class="stat-val" id="bits-total-points">0</div>
+                <div class="stat-label">Key Concept Bits</div>
+              </div>
+            </div>
+            <div class="card stat-card" style="padding: 14px 18px;">
+              <div class="stat-icon" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b;">✅</div>
+              <div>
+                <div class="stat-val" id="bits-mastered-points">0</div>
+                <div class="stat-label">Reviewed & Mastered</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Filter & Search Toolbar -->
+          <div class="bits-toolbar card" style="margin-bottom: 18px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap;">
+            <div id="bits-subject-pills" class="bits-pills-container">
+              <!-- Dynamically populated subject filter buttons -->
+            </div>
+            <div class="bits-search-box" style="position: relative; min-width: 240px; flex: 1; max-width: 380px;">
+              <input type="text" class="input-field" id="bits-search-input" placeholder="🔍 Search concepts, formulas, keywords..." style="padding-left: 36px;">
+              <span style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); font-size: 0.85rem; color: var(--text-muted); pointer-events: none;">🔍</span>
+            </div>
+          </div>
+
+          <!-- Cards Grid -->
+          <div id="bits-cards-container" class="bits-cards-grid">
+            <!-- Dynamically populated chapter cards -->
           </div>
         </section>
 
@@ -386,6 +474,225 @@
             <div class="card">
               <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 14px;">🎙️ Saved Audio Memos Library</h3>
               <div id="voice-memos-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- BRANCHER VIEW (Obsidian-Style Knowledge Trees, Column Flows & Force Graph) -->
+        <section id="view-brancher" class="view-panel">
+          <!-- TOP HEADER BAR: Style Switcher, Search, Subject Filter & Actions -->
+          <div class="brancher-header-bar" id="brancher-header-bar">
+            <div class="brancher-header-left">
+              <div class="brancher-title-box">
+                <span class="brancher-title-icon">🌿</span>
+                <span class="brancher-title-text">Branches</span>
+              </div>
+
+              <!-- 3-Way Style Switcher Pill -->
+              <div class="branch-style-switcher" id="branch-style-switcher">
+                <button type="button" class="branch-style-btn active" data-style="tree" id="btn-branch-style-tree" title="Obsidian MindMap / Markmind tree with curved branch lines">
+                  <span class="style-btn-icon">🌿</span> Mind Map Tree
+                </button>
+                <button type="button" class="branch-style-btn" data-style="columns" id="btn-branch-style-columns" title="Columnar spatial hierarchy (Subjects ➔ Branches ➔ Notes ➔ Inspector)">
+                  <span class="style-btn-icon">🗂️</span> Column Flow
+                </button>
+                <button type="button" class="branch-style-btn" data-style="graph" id="btn-branch-style-graph" title="Obsidian Force-Directed dynamic constellation graph">
+                  <span class="style-btn-icon">🕸️</span> Force Graph
+                </button>
+              </div>
+            </div>
+
+            <div class="brancher-header-right">
+              <!-- Global Filter by Subject -->
+              <div class="brancher-subject-filter-wrap">
+                <select id="brancher-subject-filter" class="input-field toolbar-select brancher-subject-select">
+                  <option value="all">📚 All Subjects</option>
+                </select>
+              </div>
+
+              <!-- Search Bar -->
+              <div class="brancher-search-box">
+                <input type="text" class="input-field brancher-search-input" id="brancher-global-search" placeholder="🔍 Search branches & notes..." autocomplete="off">
+                <button type="button" class="brancher-search-clear" id="brancher-global-search-clear" style="display: none;">✕</button>
+              </div>
+
+              <!-- Action Buttons -->
+              <button type="button" class="btn-primary btn-sm" id="brancher-global-add-branch-btn">+ Add Branch</button>
+              <button type="button" class="btn-secondary btn-sm" id="brancher-global-add-note-btn">+ Add Note</button>
+            </div>
+          </div>
+
+          <!-- SUBVIEW 1: MIND MAP TREE VIEW (Obsidian Markmind / Mindmap Style) -->
+          <div id="brancher-mindmap-view" class="brancher-subview active">
+            <!-- Mind Map Controls Bar (Zoom, Fit, Expand/Collapse All) -->
+            <div class="mindmap-toolbar">
+              <div class="mindmap-toolbar-group">
+                <button type="button" class="mindmap-tool-btn" id="mm-zoom-in-btn" title="Zoom In">➕</button>
+                <button type="button" class="mindmap-tool-btn" id="mm-zoom-out-btn" title="Zoom Out">➖</button>
+                <button type="button" class="mindmap-tool-btn" id="mm-zoom-reset-btn" title="Reset Zoom">100%</button>
+                <button type="button" class="mindmap-tool-btn" id="mm-fit-btn" title="Fit to Screen">⛶ Fit</button>
+              </div>
+              <div class="mindmap-toolbar-group">
+                <button type="button" class="mindmap-tool-btn" id="mm-expand-all-btn" title="Expand All Nodes">⊞ Expand All</button>
+                <button type="button" class="mindmap-tool-btn" id="mm-collapse-all-btn" title="Collapse to Branches">⊟ Collapse</button>
+              </div>
+              <div class="mindmap-hint-text">
+                <span>💡 Tip: Click any note to open it in Notes & Docs. Use "+" on nodes to quickly sprout new branches or notes.</span>
+              </div>
+            </div>
+
+            <!-- Pannable & Zoomable Mind Map Canvas Container -->
+            <div class="mindmap-viewport" id="mindmap-viewport">
+              <div class="mindmap-canvas-plane" id="mindmap-canvas-plane">
+                <!-- SVG layer for smooth cubic bezier curves -->
+                <svg id="mindmap-svg" class="mindmap-svg"></svg>
+                <!-- HTML overlay for rich interactive node pills -->
+                <div id="mindmap-nodes-container" class="mindmap-nodes-container"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SUBVIEW 2: COLUMN FLOW VIEW (Obsidian Arbor / Gingko Style) -->
+          <div id="brancher-columns-view" class="brancher-subview" style="display: none;">
+            <div class="branch-columns-container">
+              <!-- Column 1: Subjects -->
+              <div class="branch-column" id="col-subjects">
+                <div class="branch-column-header">
+                  <span class="branch-column-title">1. Subjects</span>
+                  <span class="branch-column-badge" id="col-subjects-count">0</span>
+                </div>
+                <div class="branch-column-body" id="col-subjects-list"></div>
+              </div>
+
+              <!-- Column 2: Branches under active Subject -->
+              <div class="branch-column" id="col-branches">
+                <div class="branch-column-header">
+                  <div class="branch-column-title-wrap">
+                    <span class="branch-column-title">2. Branches</span>
+                    <span class="branch-column-subtitle" id="col-branches-sublabel">Select a subject</span>
+                  </div>
+                  <button type="button" class="btn-xs btn-primary" id="col-add-branch-btn">+ Branch</button>
+                </div>
+                <div class="branch-column-body" id="col-branches-list"></div>
+              </div>
+
+              <!-- Column 3: Notes under active Branch -->
+              <div class="branch-column" id="col-notes">
+                <div class="branch-column-header">
+                  <div class="branch-column-title-wrap">
+                    <span class="branch-column-title">3. Notes</span>
+                    <span class="branch-column-subtitle" id="col-notes-sublabel">Select a branch</span>
+                  </div>
+                  <button type="button" class="btn-xs btn-secondary" id="col-add-note-btn">+ Note</button>
+                </div>
+                <div class="branch-column-body" id="col-notes-list"></div>
+              </div>
+
+              <!-- Column 4: Live Note Inspector / Quick Preview -->
+              <div class="branch-column branch-column-inspector" id="col-inspector">
+                <div class="branch-column-header">
+                  <span class="branch-column-title">4. Note Inspector</span>
+                  <button type="button" class="btn-xs btn-primary" id="col-inspector-open-editor-btn" style="display: none;">Open in Notes & Docs ↗</button>
+                </div>
+                <div class="branch-column-body" id="col-inspector-body">
+                  <div class="inspector-placeholder">
+                    <div style="font-size: 2.2rem; margin-bottom: 8px;">📝</div>
+                    <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">No note selected</div>
+                    <div style="font-size: 0.78rem; color: var(--text-secondary); max-width: 220px; line-height: 1.4;">Select any note from Column 3 to preview its contents and tags here.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SUBVIEW 3: FORCE GRAPH VIEW (Obsidian Interactive Force-Directed Constellation) -->
+          <div id="brancher-graph-view" class="brancher-subview" style="display: none;">
+            <div class="brancher-graph-wrapper" id="brancher-graph-wrapper">
+              <!-- Full Viewport Hardware-Accelerated Interactive Canvas -->
+              <canvas id="brancher-graph-canvas" class="brancher-graph-canvas"></canvas>
+
+              <!-- Floating Top-Left Search & Stats HUD -->
+              <div class="graph-hud-top-left">
+                <div class="graph-hud-title-row">
+                  <span class="graph-hud-logo">🕸️</span>
+                  <span class="graph-hud-title">Force Graph</span>
+                  <span class="graph-hud-badge" id="graph-stats-badge">0 nodes</span>
+                </div>
+              </div>
+
+              <!-- Floating Top-Right Actions & Tools HUD -->
+              <div class="graph-hud-top-right">
+                <div class="graph-hud-button-group">
+                  <button type="button" class="graph-hud-btn" id="graph-zoom-in-btn" title="Zoom In (+)">➕</button>
+                  <button type="button" class="graph-hud-btn" id="graph-zoom-out-btn" title="Zoom Out (-)">➖</button>
+                  <button type="button" class="graph-hud-btn" id="graph-center-btn" title="Reset View / Fit Graph to Center">⛶</button>
+                  <button type="button" class="graph-hud-btn" id="graph-settings-toggle-btn" title="Toggle Graph Filters & Physics">⚙️</button>
+                </div>
+              </div>
+
+              <!-- Collapsible Filters & Physics Settings Panel (Obsidian style) -->
+              <div class="graph-settings-drawer" id="graph-settings-drawer" style="display: none;">
+                <div class="graph-drawer-header">
+                  <span>Graph Settings & Filters</span>
+                  <button type="button" class="btn-icon" id="graph-drawer-close-btn" style="font-size: 0.8rem;">✕</button>
+                </div>
+
+                <!-- Node Visibility Filters -->
+                <div class="graph-drawer-section">
+                  <label class="graph-drawer-label">Display Nodes:</label>
+                  <div class="graph-checkbox-group">
+                    <label class="graph-checkbox-label">
+                      <input type="checkbox" id="graph-show-subjects" checked>
+                      <span class="node-legend-dot subject-dot"></span> Subjects
+                    </label>
+                    <label class="graph-checkbox-label">
+                      <input type="checkbox" id="graph-show-branches" checked>
+                      <span class="node-legend-dot branch-dot"></span> Branches
+                    </label>
+                    <label class="graph-checkbox-label">
+                      <input type="checkbox" id="graph-show-notes" checked>
+                      <span class="node-legend-dot note-dot"></span> Notes
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Physics Sliders -->
+                <div class="graph-drawer-section">
+                  <label class="graph-drawer-label">Physics Forces:</label>
+                  <div class="graph-slider-row">
+                    <span class="graph-slider-name">Link Length:</span>
+                    <input type="range" id="graph-link-dist-slider" min="40" max="220" value="110" class="graph-slider">
+                  </div>
+                  <div class="graph-slider-row">
+                    <span class="graph-slider-name">Repulsion:</span>
+                    <input type="range" id="graph-repulsion-slider" min="100" max="1500" value="650" class="graph-slider">
+                  </div>
+                </div>
+
+                <!-- Reset Physics -->
+                <button type="button" class="btn-secondary btn-sm" id="graph-reset-physics-btn" style="width: 100%; margin-top: 6px;">Restart Physics</button>
+              </div>
+
+              <!-- Floating Node Tooltip (Appears on Hover) -->
+              <div class="graph-node-tooltip" id="graph-node-tooltip" style="display: none;">
+                <div class="tooltip-badge" id="graph-tooltip-badge">Subject</div>
+                <div class="tooltip-title" id="graph-tooltip-title">Physics</div>
+                <div class="tooltip-subtitle" id="graph-tooltip-subtitle">2 branches • 4 notes</div>
+                <div class="tooltip-hint" id="graph-tooltip-hint">Click to open in Notes & Docs ➔</div>
+              </div>
+
+              <!-- Branch Action Popover (Appears on Clicking a Branch Node) -->
+              <div class="graph-branch-popover" id="graph-branch-popover" style="display: none;">
+                <div class="popover-title-row">
+                  <span class="popover-icon" id="popover-branch-icon">🌿</span>
+                  <span class="popover-title" id="popover-branch-title">Quantum Mechanics</span>
+                </div>
+                <div class="popover-actions">
+                  <button type="button" class="btn-sm btn-primary" id="popover-add-note-btn">+ Add Note</button>
+                  <button type="button" class="btn-sm btn-secondary" id="popover-rename-branch-btn">✏️ Rename</button>
+                  <button type="button" class="btn-sm btn-danger" id="popover-delete-branch-btn">🗑️ Delete</button>
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -452,8 +759,7 @@
               <p class="page-desc">Resize photo to exact pixel dimensions (W × H) and target file size in KB with biometric guidelines.</p>
             </div>
             <div style="display: flex; gap: 10px;">
-              <button class="btn-primary" id="passport-process-btn">⚙️ Process & Compress</button>
-              <button class="btn-secondary" id="passport-download-btn" disabled>💾 Download Photo</button>
+              <button class="btn-primary" id="passport-process-download-btn" disabled>⚡ Process & Download</button>
             </div>
           </div>
 
@@ -461,7 +767,7 @@
             <!-- Left: Interactive Canvas with Guidelines -->
             <div class="card">
               <div class="photo-preview-box" id="passport-dropzone">
-                <canvas id="passport-preview-canvas" style="max-width: 100%; max-height: 100%; object-fit: contain;"></canvas>
+                <canvas id="passport-preview-canvas"></canvas>
               </div>
 
               <div style="display: flex; justify-content: space-between; margin-top: 12px;">
@@ -479,60 +785,73 @@
             </div>
 
             <!-- Right: Precision Controls -->
-            <div class="card" style="display: flex; flex-direction: column; gap: 16px;">
-              <div>
-                <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 6px;">Official Passport / Visa Preset:</label>
-                <select class="select-field" id="passport-preset-select">
-                  <option value="india">India Passport / Exam / SSC (413 × 531 px, 20-50 KB)</option>
-                  <option value="us">US Visa / Green Card (600 × 600 px, max 100 KB)</option>
-                  <option value="schengen">Schengen / EU Visa (413 × 531 px, 30-80 KB)</option>
-                  <option value="uk">UK Passport (413 × 531 px, max 40 KB)</option>
-                  <option value="custom">Custom Dimensions & Target KB</option>
-                </select>
+            <div class="card" id="passport-controls-card" style="display: flex; flex-direction: column; gap: 16px;">
+              <!-- Upload Prompt Banner (Visible when no photo is loaded) -->
+              <div id="passport-upload-prompt" style="padding: 12px 14px; background: rgba(99, 102, 241, 0.08); border: 1px dashed rgba(99, 102, 241, 0.35); border-radius: var(--radius-sm); font-size: 0.82rem; color: var(--accent); display: flex; align-items: center; gap: 8px;">
+                <span>ℹ️</span>
+                <span>Upload a photo first. Its original resolution, DPI, and file size will be detected automatically, and controls will unlock for editing.</span>
+              </div>
+
+              <!-- Detected Photo Banner (Visible when photo is loaded) -->
+              <div id="passport-detected-banner" style="display: none; padding: 10px 14px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: var(--radius-sm); font-size: 0.8rem; color: var(--text-primary); align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <div>
+                  <span style="color: var(--success); font-weight: 700;">✓ Original Detected:</span>
+                  <span id="passport-detected-info" style="font-weight: 600; margin-left: 4px;">—</span>
+                </div>
+                <button type="button" class="btn-secondary" id="passport-reset-orig-btn" style="padding: 3px 8px; font-size: 0.72rem;" title="Reset target dimensions and size back to original photo values">↺ Reset to Original</button>
               </div>
 
               <div class="spec-grid">
                 <div>
-                  <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Target Width (Pixels):</label>
-                  <input type="number" class="input-field" id="passport-width-input" value="413">
+                  <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 6px;">Dimension Unit:</label>
+                  <select class="select-field" id="passport-unit-select" disabled>
+                    <option value="px" selected>Pixels (px)</option>
+                    <option value="cm">Centimeters (cm)</option>
+                    <option value="in">Inches (in)</option>
+                  </select>
                 </div>
                 <div>
-                  <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Target Height (Pixels):</label>
-                  <input type="number" class="input-field" id="passport-height-input" value="531">
+                  <label style="font-size: 0.85rem; font-weight: 600; display: block; margin-bottom: 6px;">Print DPI (Resolution):</label>
+                  <input type="number" class="input-field" id="passport-dpi-input" value="300" min="50" max="2400" step="1" placeholder="e.g. 300" disabled>
                 </div>
+              </div>
+
+              <div class="spec-grid">
+                <div>
+                  <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Target Width (<span id="passport-unit-label-w">px</span>):</label>
+                  <input type="number" step="any" class="input-field" id="passport-width-input" placeholder="e.g. 1920" disabled>
+                </div>
+                <div>
+                  <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Target Height (<span id="passport-unit-label-h">px</span>):</label>
+                  <input type="number" step="any" class="input-field" id="passport-height-input" placeholder="e.g. 1080" disabled>
+                </div>
+              </div>
+              <div id="passport-pixel-equiv" style="font-size: 0.76rem; color: var(--text-muted); margin-top: -6px; display: none;">
+                Resulting resolution: <span id="passport-pixel-equiv-text" style="color: var(--accent); font-weight: 600;">—</span>
               </div>
 
               <div>
                 <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">
                   Target File Size (KB): <span style="font-weight: 700; color: var(--accent);">Strict File Limit</span>
                 </label>
-                <input type="number" class="input-field" id="passport-kb-input" value="45" placeholder="e.g. 50 KB">
-                <span style="font-size: 0.72rem; color: var(--text-muted);">Uses iterative binary compression to fit within exact government portal upload thresholds.</span>
-              </div>
-
-              <div>
-                <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Background Color Tone:</label>
-                <select class="select-field" id="passport-bg-select">
-                  <option value="white">Plain White (Official Standard)</option>
-                  <option value="off-white">Off-White / Light Gray</option>
-                  <option value="light-blue">Light Blue</option>
-                </select>
+                <input type="number" class="input-field" id="passport-kb-input" placeholder="e.g. 500" disabled>
+                <span style="font-size: 0.72rem; color: var(--text-muted);">Uses iterative binary compression to fit within exact upload thresholds.</span>
               </div>
 
               <div style="background: var(--bg-input); padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--border);">
                 <div style="font-size: 0.85rem; font-weight: 600; margin-bottom: 10px;">Crop & Face Positioning:</div>
                 <div style="margin-bottom: 8px;">
                   <label style="font-size: 0.75rem; color: var(--text-secondary);">Zoom Scale:</label>
-                  <input type="range" id="passport-zoom-slider" min="0.5" max="2.5" step="0.05" value="1" style="width: 100%;">
+                  <input type="range" id="passport-zoom-slider" min="0.5" max="2.5" step="0.05" value="1" style="width: 100%;" disabled>
                 </div>
                 <div class="spec-grid">
                   <div>
                     <label style="font-size: 0.75rem; color: var(--text-secondary);">Center X Offset:</label>
-                    <input type="range" id="passport-offset-x" min="-50" max="50" step="1" value="0" style="width: 100%;">
+                    <input type="range" id="passport-offset-x" min="-50" max="50" step="1" value="0" style="width: 100%;" disabled>
                   </div>
                   <div>
                     <label style="font-size: 0.75rem; color: var(--text-secondary);">Center Y Offset:</label>
-                    <input type="range" id="passport-offset-y" min="-50" max="50" step="1" value="0" style="width: 100%;">
+                    <input type="range" id="passport-offset-y" min="-50" max="50" step="1" value="0" style="width: 100%;" disabled>
                   </div>
                 </div>
               </div>
@@ -545,7 +864,6 @@
           <div class="page-header">
             <div>
               <h1 class="page-title">Interactive Calendar & Audio Reminders</h1>
-              <p class="page-desc">Mark exam dates, assignments, and study blocks. Real-time audio chimes and notifications alert you when due.</p>
             </div>
           </div>
 
@@ -572,10 +890,6 @@
             <div class="card" style="display: flex; flex-direction: column; gap: 16px;">
               <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                 <h3 style="font-size: 1.1rem; font-weight: 700;" id="reminders-view-title">Reminders & Deadlines</h3>
-                <div class="system-time-pill" id="system-time-pill" title="Current Real Computer System Clock">
-                  <span class="system-time-dot"></span>
-                  <span id="live-system-time-text">System Time: --:--:--</span>
-                </div>
               </div>
 
               <div class="reminders-list" id="reminders-list-container"></div>
@@ -972,6 +1286,60 @@
         </div>
         <button type="submit" class="btn-primary" style="margin-top: 6px;">Create Subject & Open Workspace</button>
       </form>
+    </div>
+  </div>
+
+  <!-- Modal 5: Create / Add New Branch -->
+  <div class="modal-overlay" id="create-branch-modal">
+    <div class="modal-card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h3 style="font-size: 1.15rem; font-weight: 700;">🌿 Add New Branch</h3>
+        <button type="button" class="btn-icon modal-close-btn" id="create-branch-modal-close">✕</button>
+      </div>
+      <form id="create-branch-form" style="display: flex; flex-direction: column; gap: 14px;">
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Parent Subject:</label>
+          <select class="input-field" id="new-branch-subject" required style="width: 100%;">
+            <!-- Populated dynamically with all subjects -->
+          </select>
+        </div>
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Branch Name / Topic:</label>
+          <input type="text" class="input-field" id="new-branch-name" placeholder="e.g. Thermodynamics, Optics, Quantum Mechanics" required style="width: 100%;">
+        </div>
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Description (Optional):</label>
+          <input type="text" class="input-field" id="new-branch-description" placeholder="Brief summary of topics covered in this branch..." style="width: 100%;">
+        </div>
+        <div>
+          <label style="font-size: 0.8rem; color: var(--text-secondary); display: block; margin-bottom: 4px;">Branch Emoji / Icon:</label>
+          <input type="text" class="input-field" id="new-branch-icon" placeholder="e.g. 🌿, ⚛️, ⚡, 🧲, 🌡️" value="🌿" style="width: 100%;">
+        </div>
+        <button type="submit" class="btn-primary" style="margin-top: 6px;">Create Branch</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal 6: Brancher Quick Note Preview / Modal -->
+  <div class="modal-overlay" id="brancher-note-preview-modal">
+    <div class="modal-card" style="max-width: 650px; width: 90%;">
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; border-bottom: 1px solid var(--border); padding-bottom: 12px;">
+        <div>
+          <div id="brancher-preview-subject-badge" class="status-pill" style="font-size: 0.72rem; margin-bottom: 6px;">Physics • Quantum</div>
+          <h3 id="brancher-preview-note-title" style="font-size: 1.2rem; font-weight: 700; color: var(--text-primary); line-height: 1.3;">Note Title</h3>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button type="button" class="btn-primary btn-sm" id="brancher-preview-open-editor-btn" title="Open full rich editor in Notes & Docs">Open in Notes & Docs ↗</button>
+          <button type="button" class="btn-icon modal-close-btn" id="brancher-preview-modal-close">✕</button>
+        </div>
+      </div>
+      <div id="brancher-preview-note-body" style="max-height: 400px; overflow-y: auto; padding: 14px; background: var(--bg-card); border-radius: var(--radius-sm); font-size: 0.92rem; line-height: 1.6; color: var(--text-primary); border: 1px solid var(--border-subtle);">
+        <!-- Formatted note content preview -->
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 14px; font-size: 0.78rem; color: var(--text-muted);">
+        <span id="brancher-preview-note-tags"></span>
+        <span id="brancher-preview-note-date"></span>
+      </div>
     </div>
   </div>
 

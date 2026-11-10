@@ -9,11 +9,13 @@
 
 import { saveState, loadState, storeBlob, getBlob } from './storage.js';
 import { createSynthesizedAudioBlob } from './voice-notes.js';
+import { getBranchesForSubject, openCreateBranchModal } from './brancher.js';
 
 let subjects = [];
 let notes = [];
 let activeSubject = null;
 let activeNoteId = null;
+let activeBranchFilter = null;
 let saveTimeout = null;
 
 // Floating voice recorder state
@@ -132,12 +134,20 @@ export function initNotesModule(onNoteChange, showToastFn) {
   // New Note inside active subject
   newNoteBtn?.addEventListener('click', () => {
     if (!activeSubject) return;
+    const currentBranch = (activeBranchFilter && activeBranchFilter !== 'all' && activeBranchFilter !== '__unbranched__')
+      ? activeBranchFilter
+      : '';
     const newNote = {
       id: `note_${Date.now()}`,
-      title: `Untitled ${activeSubject} Note`,
+      title: currentBranch ? `Untitled ${currentBranch} Note` : `Untitled ${activeSubject} Note`,
       category: activeSubject,
-      content: `# ${activeSubject} Notes\n\n- \n- `,
-      tags: [activeSubject.toLowerCase().replace(/\s+/g, '-'), 'study'],
+      branch: currentBranch,
+      content: currentBranch ? `# ${currentBranch} Study Notes\n\n- \n- ` : `# ${activeSubject} Notes\n\n- \n- `,
+      tags: [
+        activeSubject.toLowerCase().replace(/\s+/g, '-'),
+        ...(currentBranch ? [currentBranch.toLowerCase().replace(/\s+/g, '-')] : []),
+        'study'
+      ],
       voice_memos: [],
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
@@ -145,9 +155,60 @@ export function initNotesModule(onNoteChange, showToastFn) {
     notes.unshift(newNote);
     activeNoteId = newNote.id;
     saveNotes();
+    renderBranchBar();
     renderNotesList();
     loadNoteIntoEditor(newNote);
     document.getElementById('note-edit-title')?.focus();
+  });
+
+  // Branch Bar "+ Add Branch" button
+  document.getElementById('notes-add-branch-btn')?.addEventListener('click', () => {
+    openCreateBranchModal(activeSubject);
+  });
+
+  // Branch Selector dropdown in note editor
+  const branchSelect = document.getElementById('note-edit-branch');
+  branchSelect?.addEventListener('change', () => {
+    if (branchSelect.value === '__new_branch__') {
+      openCreateBranchModal(activeSubject);
+      const cur = notes.find(n => n.id === activeNoteId);
+      branchSelect.value = cur?.branch || '';
+      return;
+    }
+
+    if (activeNoteId) {
+      const cur = notes.find(n => n.id === activeNoteId);
+      if (cur) {
+        cur.branch = branchSelect.value;
+        cur.updated_at = new Date().toISOString();
+        saveNotes();
+        renderBranchBar();
+        renderNotesList();
+      }
+    }
+  });
+
+  // Listen to branch updates
+  window.addEventListener('omnistudy:branches-updated', () => {
+    if (activeSubject) {
+      renderBranchBar();
+      const cur = notes.find(n => n.id === activeNoteId);
+      populateEditorBranchSelect(cur?.branch || '');
+    }
+  });
+
+  // Listen to external note updates (e.g. from Brancher View)
+  window.addEventListener('omnistudy:notes-updated', () => {
+    const saved = localStorage.getItem('omnistudy_notes');
+    if (saved) {
+      try {
+        notes = JSON.parse(saved);
+        if (activeSubject) {
+          renderBranchBar();
+          renderNotesList();
+        }
+      } catch {}
+    }
   });
 
   // Note editor instant auto-save
@@ -438,20 +499,54 @@ function setupEditorFontAndFormattingControls(onNoteChange) {
     }
   });
 
-  // Sync toolbar active button states when cursor moves or selection changes
+  // Sync toolbar active button states and auto-adjust page whenever cursor moves
+  let isAdjustingScroll = false;
+  function handleCaretScrollAdjustment(forceCenter = false) {
+    if (isAdjustingScroll) return;
+    isAdjustingScroll = true;
+    requestAnimationFrame(() => {
+      try {
+        const editor = document.getElementById('note-edit-content');
+        if (editor && (document.activeElement === editor || editor.contains(document.activeElement))) {
+          autoAdjustPageToMiddle(editor, forceCenter);
+        }
+      } finally {
+        isAdjustingScroll = false;
+      }
+    });
+  }
+
   document.addEventListener('selectionchange', () => {
     if (document.activeElement === editorElem || editorElem?.contains(document.activeElement)) {
       updateToolbarButtonStates();
     }
   });
-  editorElem?.addEventListener('keyup', updateToolbarButtonStates);
-  editorElem?.addEventListener('mouseup', updateToolbarButtonStates);
+
+  // Auto-adjust page when typing or pressing navigation/Enter keys
+  editorElem?.addEventListener('keydown', (e) => {
+    if (['Enter', 'ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Backspace', 'Delete'].includes(e.key)) {
+      handleCaretScrollAdjustment();
+    }
+  });
+
+  editorElem?.addEventListener('keyup', (e) => {
+    updateToolbarButtonStates();
+    if (['Enter', 'ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Backspace', 'Delete', ' '].includes(e.key)) {
+      handleCaretScrollAdjustment();
+    }
+  });
+
+  editorElem?.addEventListener('mouseup', () => {
+    updateToolbarButtonStates();
+  });
+
   editorElem?.addEventListener('input', () => {
     updateToolbarButtonStates();
     triggerAutoSave(onNoteChange);
+    handleCaretScrollAdjustment();
   });
 
-  // Handle click on interactive voice chips inside contenteditable
+  // Handle click on interactive voice chips and click in generous bottom space
   editorElem?.addEventListener('click', (e) => {
     const chipMic = e.target.closest('.note-voice-chip-mic, .note-voice-chip');
     if (chipMic) {
@@ -461,7 +556,24 @@ function setupEditorFontAndFormattingControls(onNoteChange) {
       const dur = chipMic.dataset.dur || '00:08';
       const title = chipMic.dataset.title || 'Voice Note';
       togglePlayVoiceMemo(memoId, title, dur);
+      return;
     }
+
+    // If clicking in the bottom padding space below the last element, move cursor to the end
+    const lastChild = editorElem.lastElementChild;
+    if (lastChild) {
+      const lastRect = lastChild.getBoundingClientRect();
+      if (e.clientY > lastRect.bottom + 8) {
+        const range = document.createRange();
+        const sel = window.getSelection();
+        range.selectNodeContents(lastChild);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        editorElem.focus();
+      }
+    }
+    handleCaretScrollAdjustment();
   });
 }
 
@@ -506,6 +618,122 @@ function updateToolbarButtonStates() {
     if (highlightBtn) highlightBtn.classList.toggle('active', isHilite);
     if (headingBtn) headingBtn.classList.toggle('active', isH3);
   } catch (err) {}
+}
+
+/**
+ * 100% read-only caret coordinate detector for editor scrolling.
+ * Safely inspects the bounding client rectangle of the caret without modifying the DOM or selection.
+ */
+function getCaretViewportRect(editor) {
+  if (!editor) return null;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!editor.contains(range.startContainer)) return null;
+
+  // 1. Try native getBoundingClientRect() if valid
+  try {
+    const rect = range.getBoundingClientRect();
+    if (rect && rect.height > 0 && rect.bottom > 0) {
+      return rect;
+    }
+  } catch (e) {}
+
+  // 2. Try native getClientRects() if valid
+  try {
+    const rects = range.getClientRects();
+    if (rects && rects.length > 0 && rects[0].height > 0 && rects[0].bottom > 0) {
+      return rects[0];
+    }
+  } catch (e) {}
+
+  // 3. If in a text node, use a 1-character sub-range around the cursor (non-destructive, read-only)
+  const node = range.startContainer;
+  const offset = range.startOffset;
+  if (node && node.nodeType === Node.TEXT_NODE) {
+    if (offset > 0) {
+      try {
+        const charRange = document.createRange();
+        charRange.setStart(node, offset - 1);
+        charRange.setEnd(node, offset);
+        const cr = charRange.getBoundingClientRect();
+        if (cr && cr.height > 0 && cr.bottom > 0) return cr;
+      } catch (e) {}
+    }
+    if (node.length > offset) {
+      try {
+        const charRange = document.createRange();
+        charRange.setStart(node, offset);
+        charRange.setEnd(node, offset + 1);
+        const cr = charRange.getBoundingClientRect();
+        if (cr && cr.height > 0 && cr.bottom > 0) return cr;
+      } catch (e) {}
+    }
+  }
+
+  // 4. If in an element node (e.g. at a <br> or block boundary)
+  if (node && node.nodeType === Node.ELEMENT_NODE) {
+    const child = node.childNodes[offset] || node.childNodes[offset - 1];
+    if (child) {
+      if (child.nodeType === Node.ELEMENT_NODE) {
+        const cr = child.getBoundingClientRect();
+        if (cr && cr.height > 0 && cr.bottom > 0) return cr;
+      } else if (child.nodeType === Node.TEXT_NODE && child.length > 0) {
+        try {
+          const charRange = document.createRange();
+          charRange.setStart(child, 0);
+          charRange.setEnd(child, Math.min(1, child.length));
+          const cr = charRange.getBoundingClientRect();
+          if (cr && cr.height > 0 && cr.bottom > 0) return cr;
+        } catch (e) {}
+      }
+    }
+    // Read-only element fallback
+    if (node !== editor && editor.contains(node)) {
+      const cr = node.getBoundingClientRect();
+      if (cr && cr.height > 0 && cr.bottom > 0) return cr;
+    }
+  }
+
+  // 5. Parent element fallback (strictly read-only)
+  const parent = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  if (parent && parent !== editor && editor.contains(parent)) {
+    const cr = parent.getBoundingClientRect();
+    if (cr && cr.height > 0 && cr.bottom > 0) return cr;
+  }
+
+  return null;
+}
+
+/**
+ * Automatically adjust the page scroll position so that the cursor never reaches
+ * the bottom of the page. Once the cursor reaches the vertical middle (~48% from top),
+ * the editor scrolls itself so that typing stays centered comfortably at eye-level.
+ */
+function autoAdjustPageToMiddle(editor, forceCenter = false) {
+  if (!editor) return;
+  const caretRect = getCaretViewportRect(editor);
+  if (!caretRect || caretRect.height === 0 || caretRect.bottom === 0) return;
+
+  const editorRect = editor.getBoundingClientRect();
+  // Vertical middle part: 48% down from the top of the editor pane
+  const middleY = editorRect.top + (editorRect.height * 0.48);
+
+  if (caretRect.bottom > middleY || forceCenter) {
+    // Caret reached or passed the middle line:
+    // Automatically adjust the scroll position so cursor stays at the middle part
+    const delta = caretRect.bottom - middleY;
+    if (delta > 0 || forceCenter) {
+      editor.scrollTop += delta;
+    }
+  } else {
+    // When editing or navigating near the very top of the editor, keep line comfortably visible
+    const topLimit = editorRect.top + 28;
+    if (caretRect.top < topLimit) {
+      const scrollUp = topLimit - caretRect.top;
+      editor.scrollTop -= scrollUp;
+    }
+  }
 }
 
 function toggleHighlight() {
@@ -928,6 +1156,20 @@ const SLASH_COMMANDS = [
     keywords: 'pdf download export print document file',
     action: () => {
       downloadCurrentNoteAsPdf();
+    }
+  },
+  {
+    cmd: 'center',
+    title: 'Center View at Cursor',
+    desc: 'Scroll the editor so the current cursor line is at the vertical middle.',
+    icon: '📜',
+    keywords: 'center typewriter scroll focus vertical middle eye-level breathing bottom',
+    action: () => {
+      const editor = document.getElementById('note-edit-content');
+      if (editor) {
+        autoAdjustPageToMiddle(editor, true);
+        toastFn?.('Editor centered at cursor line', 'info');
+      }
     }
   }
 ];
@@ -2238,6 +2480,42 @@ function loadSubjectsAndNotes() {
 }
 
 /**
+ * Fluid FLIP Animation Helper for smooth space-adjusting drag & drop
+ */
+function animateFLIP(container, domMutationFn) {
+  const children = Array.from(container.children).filter(el => 
+    el.style.display !== 'none' && 
+    !el.classList.contains('note-drag-placeholder') && 
+    !el.classList.contains('subject-drag-placeholder')
+  );
+
+  const firstPositions = new Map();
+  children.forEach(child => {
+    firstPositions.set(child, child.getBoundingClientRect());
+  });
+
+  domMutationFn();
+
+  children.forEach(child => {
+    const first = firstPositions.get(child);
+    if (!first) return;
+    const last = child.getBoundingClientRect();
+    const deltaX = first.left - last.left;
+    const deltaY = first.top - last.top;
+
+    if (deltaX !== 0 || deltaY !== 0) {
+      child.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+      child.style.transition = 'none';
+
+      requestAnimationFrame(() => {
+        child.style.transform = '';
+        child.style.transition = 'transform 0.22s cubic-bezier(0.2, 0, 0, 1)';
+      });
+    }
+  });
+}
+
+/**
  * Render Subject Square Tiles Grid
  */
 export function renderSubjectTiles() {
@@ -2264,28 +2542,17 @@ export function renderSubjectTiles() {
     const subjectNotes = notes.filter(n => n.category.toLowerCase() === subj.name.toLowerCase());
     const noteCount = subjectNotes.length;
     const previews = subjectNotes.slice(0, 2).map(n => escapeHtml(n.title)).join(' • ');
-    const isSelected = selectedSubjectNames.has(subj.name);
 
     html += `
-      <div class="subject-square-tile ${isTileSelectMode ? 'select-mode' : ''} ${isSelected ? 'selected' : ''}" 
-           data-subject="${escapeHtml(subj.name)}"
-           draggable="${!isTileSelectMode ? 'true' : 'false'}">
+      <div class="subject-square-tile" data-subject="${escapeHtml(subj.name)}">
         <div>
-          ${isTileSelectMode ? `
-            <div class="tile-select-checkbox-wrap">
-              <input type="checkbox" class="tile-select-checkbox" data-subject="${escapeHtml(subj.name)}" ${isSelected ? 'checked' : ''} />
-              <span style="font-size: 0.8rem; margin-left: 6px; font-weight: 500; color: ${isSelected ? 'var(--primary)' : 'var(--text-muted)'};">${isSelected ? 'Selected' : 'Select'}</span>
-            </div>
-          ` : ''}
           <div class="subject-tile-header">
             <div class="subject-tile-icon">${subj.icon || '📚'}</div>
             <div style="display: flex; align-items: center; gap: 6px;">
               <span class="subject-tile-count">${noteCount} ${noteCount === 1 ? 'note' : 'notes'}</span>
-              ${!isTileSelectMode ? `
-                <button type="button" class="tile-delete-btn" data-subject="${escapeHtml(subj.name)}" title="Delete ${escapeHtml(subj.name)} tile">
-                  🗑️
-                </button>
-              ` : ''}
+              <button type="button" class="tile-delete-btn" data-subject="${escapeHtml(subj.name)}" title="Delete ${escapeHtml(subj.name)} tile">
+                🗑️
+              </button>
             </div>
           </div>
           <div class="subject-tile-title">${escapeHtml(subj.name)}</div>
@@ -2293,7 +2560,7 @@ export function renderSubjectTiles() {
         </div>
 
         <div class="subject-tile-footer">
-          <span>${isTileSelectMode ? (isSelected ? '✓ Selected' : 'Click to select') : 'Open Notes ➔'}</span>
+          <span>Open Notes ➔</span>
           <span style="font-family: var(--font-mono); opacity: 0.8;">${noteCount > 0 ? 'Active' : 'Empty'}</span>
         </div>
       </div>
@@ -2301,7 +2568,7 @@ export function renderSubjectTiles() {
   });
 
   // Dynamic creation tile as user types (only in normal view)
-  if (!isTileSelectMode && query.length > 0 && !subjects.some(s => s.name.toLowerCase() === query)) {
+  if (query.length > 0 && !subjects.some(s => s.name.toLowerCase() === query)) {
     const suggestedEmoji = getSubjectEmoji(query);
     const capitalized = query.charAt(0).toUpperCase() + query.slice(1);
 
@@ -2324,114 +2591,125 @@ export function renderSubjectTiles() {
   }
 
   // "+ Add Subject" tile (only in normal view)
-  if (!isTileSelectMode) {
-    html += `
-      <div class="add-subject-tile" id="grid-add-subject-tile">
-        <div class="add-subject-icon">+</div>
-        <div style="font-weight: 600; font-size: 0.95rem;">New Subject Tile</div>
-        <div style="font-size: 0.75rem; color: var(--text-muted);">Organize your study tracks</div>
-      </div>
-    `;
-  }
+  html += `
+    <div class="add-subject-tile" id="grid-add-subject-tile">
+      <div class="add-subject-icon">+</div>
+      <div style="font-weight: 600; font-size: 0.95rem;">New Subject Tile</div>
+      <div style="font-size: 0.75rem; color: var(--text-muted);">Organize your study tracks</div>
+    </div>
+  `;
 
   container.innerHTML = html;
 
-  // Bind clicks and drag-drop on each subject tile
+  // Bind clicks and fluid space-adjusting drag-drop on each subject tile
   container.querySelectorAll('.subject-square-tile[data-subject]').forEach(tile => {
     const subjectName = tile.dataset.subject;
 
     // Direct delete button click handler
     const deleteBtn = tile.querySelector('.tile-delete-btn');
     if (deleteBtn) {
-      deleteBtn.setAttribute('draggable', 'false');
-      deleteBtn.addEventListener('dragstart', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         deleteSubjectWithConfirm(subjectName);
       });
     }
 
-    // Checkbox click handler
-    const checkbox = tile.querySelector('.tile-select-checkbox');
-    if (checkbox) {
-      checkbox.setAttribute('draggable', 'false');
-      checkbox.addEventListener('dragstart', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
-      checkbox.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleSubjectSelection(subjectName);
-      });
-    }
+    // Pointer-based fluid drag-and-drop & click handler
+    tile.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest('.tile-delete-btn')) return;
 
-    // Tile click handler
-    tile.addEventListener('click', () => {
-      if (isDraggingSubject) return;
-      if (isTileSelectMode) {
-        toggleSubjectSelection(subjectName);
-      } else {
-        openSubjectWorkspace(subjectName);
-      }
-    });
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const tileRect = tile.getBoundingClientRect();
+      const grabOffsetX = startX - tileRect.left;
+      const grabOffsetY = startY - tileRect.top;
 
-    // Drag-and-drop repositioning handlers (when not in select mode)
-    if (!isTileSelectMode) {
-      tile.addEventListener('dragstart', (e) => {
-        draggedSubjectName = subjectName;
-        isDraggingSubject = true;
-        tile.classList.add('dragging');
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', subjectName);
-      });
+      let isDragging = false;
+      let avatar = null;
+      let placeholder = null;
 
-      tile.addEventListener('dragend', () => {
-        draggedSubjectName = null;
-        tile.classList.remove('dragging');
-        container.querySelectorAll('.subject-square-tile').forEach(t => {
-          t.classList.remove('drop-indicator-before', 'drop-indicator-after');
-        });
-        setTimeout(() => { isDraggingSubject = false; }, 60);
-      });
+      function onPointerMove(moveEvent) {
+        const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+        if (!isDragging && dist > 6) {
+          isDragging = true;
 
-      tile.addEventListener('dragover', (e) => {
-        if (!draggedSubjectName || draggedSubjectName.toLowerCase() === subjectName.toLowerCase()) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
+          // Placeholder element occupies space in the grid
+          placeholder = document.createElement('div');
+          placeholder.className = 'subject-drag-placeholder';
+          placeholder.style.width = `${tileRect.width}px`;
+          placeholder.style.height = `${tileRect.height}px`;
 
-        const rect = tile.getBoundingClientRect();
-        const relX = e.clientX - rect.left;
-        const isBefore = relX < rect.width / 2;
+          // Elevated avatar element following pointer
+          avatar = tile.cloneNode(true);
+          avatar.className = `${tile.className} tile-drag-avatar`;
+          avatar.style.width = `${tileRect.width}px`;
+          avatar.style.height = `${tileRect.height}px`;
+          avatar.style.left = `${moveEvent.clientX - grabOffsetX}px`;
+          avatar.style.top = `${moveEvent.clientY - grabOffsetY}px`;
+          document.body.appendChild(avatar);
 
-        tile.classList.toggle('drop-indicator-before', isBefore);
-        tile.classList.toggle('drop-indicator-after', !isBefore);
-      });
-
-      tile.addEventListener('dragleave', (e) => {
-        if (!tile.contains(e.relatedTarget)) {
-          tile.classList.remove('drop-indicator-before', 'drop-indicator-after');
+          tile.parentNode.insertBefore(placeholder, tile);
+          tile.style.display = 'none';
+          document.body.style.userSelect = 'none';
         }
-      });
 
-      tile.addEventListener('drop', (e) => {
-        e.preventDefault();
-        tile.classList.remove('drop-indicator-before', 'drop-indicator-after');
+        if (isDragging && avatar && placeholder) {
+          avatar.style.left = `${moveEvent.clientX - grabOffsetX}px`;
+          avatar.style.top = `${moveEvent.clientY - grabOffsetY}px`;
 
-        const sourceName = draggedSubjectName || e.dataTransfer.getData('text/plain');
-        const targetName = subjectName;
+          // Find hovered sibling tile in grid
+          const siblings = Array.from(container.querySelectorAll('.subject-square-tile[data-subject]')).filter(t => t !== tile && t.style.display !== 'none');
 
-        if (!sourceName || sourceName.toLowerCase() === targetName.toLowerCase()) return;
+          for (const sibling of siblings) {
+            const rect = sibling.getBoundingClientRect();
+            if (
+              moveEvent.clientX >= rect.left && 
+              moveEvent.clientX <= rect.right && 
+              moveEvent.clientY >= rect.top && 
+              moveEvent.clientY <= rect.bottom
+            ) {
+              const isBefore = moveEvent.clientX < rect.left + rect.width / 2;
+              const targetNode = isBefore ? sibling : sibling.nextSibling;
 
-        const rect = tile.getBoundingClientRect();
-        const relX = e.clientX - rect.left;
-        const placeBefore = relX < rect.width / 2;
+              if (placeholder.nextSibling !== targetNode && placeholder !== targetNode) {
+                animateFLIP(container, () => {
+                  container.insertBefore(placeholder, targetNode);
+                });
+              }
+              break;
+            }
+          }
+        }
+      }
 
-        reorderSubjects(sourceName, targetName, placeBefore);
-      });
-    }
+      function onPointerUp() {
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        document.body.style.userSelect = '';
+
+        if (isDragging) {
+          if (placeholder && placeholder.parentNode) {
+            placeholder.parentNode.insertBefore(tile, placeholder);
+            placeholder.remove();
+          }
+          tile.style.display = '';
+          if (avatar) avatar.remove();
+
+          const reorderedNames = Array.from(container.querySelectorAll('.subject-square-tile[data-subject]'))
+            .map(el => el.dataset.subject)
+            .filter(Boolean);
+
+          applyNewSubjectOrder(reorderedNames);
+        } else {
+          // Normal click without drag opens workspace
+          openSubjectWorkspace(subjectName);
+        }
+      }
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+    });
   });
 
   const dynamicTile = document.getElementById('dynamic-create-subject-tile');
@@ -2483,14 +2761,14 @@ function toggleSubjectSelection(subjectName) {
   renderSubjectTiles();
 }
 
-function deleteSubjectWithConfirm(subjectName) {
+export function deleteSubjectWithConfirm(subjectName) {
   const norm = subjectName.toLowerCase();
   const associatedNotes = notes.filter(n => n.category.toLowerCase() === norm);
   const noteCountMsg = associatedNotes.length > 0 
     ? ` and its ${associatedNotes.length} associated note${associatedNotes.length === 1 ? '' : 's'}`
     : '';
 
-  if (!confirm(`Are you sure you want to delete the "${subjectName}" tile${noteCountMsg}? This action cannot be undone.`)) {
+  if (!confirm(`Are you sure you want to delete the "${subjectName}" subject${noteCountMsg}? This action cannot be undone.`)) {
     return;
   }
 
@@ -2500,7 +2778,7 @@ function deleteSubjectWithConfirm(subjectName) {
   }
 }
 
-function deleteSubject(subjectName) {
+export function deleteSubject(subjectName) {
   const norm = subjectName.toLowerCase();
   subjects = subjects.filter(s => s.name.toLowerCase() !== norm);
   localStorage.setItem('omnistudy_subjects', JSON.stringify(subjects));
@@ -2524,6 +2802,7 @@ function deleteSubject(subjectName) {
   saveNotes();
   if (noteChangeCallback) noteChangeCallback();
   renderSubjectTiles();
+  window.dispatchEvent(new CustomEvent('omnistudy:subjects-updated'));
 }
 
 function deleteSelectedSubjects() {
@@ -2576,19 +2855,24 @@ function deleteSelectedSubjects() {
   }
 }
 
-function reorderSubjects(sourceName, targetName, placeBefore) {
-  const fromIndex = subjects.findIndex(s => s.name.toLowerCase() === sourceName.toLowerCase());
-  if (fromIndex === -1) return;
+function applyNewSubjectOrder(reorderedNames) {
+  if (!reorderedNames || reorderedNames.length === 0) return;
 
-  const [movedSubject] = subjects.splice(fromIndex, 1);
-  const toIndex = subjects.findIndex(s => s.name.toLowerCase() === targetName.toLowerCase());
-  if (toIndex === -1) {
-    subjects.push(movedSubject);
-  } else {
-    const insertIndex = placeBefore ? toIndex : toIndex + 1;
-    subjects.splice(insertIndex, 0, movedSubject);
-  }
+  const subjectMap = new Map();
+  subjects.forEach(s => subjectMap.set(s.name.toLowerCase(), s));
 
+  const reordered = reorderedNames
+    .map(name => subjectMap.get(name.toLowerCase()))
+    .filter(Boolean);
+
+  // Preserve any subjects not in the DOM
+  subjects.forEach(s => {
+    if (!reordered.some(r => r.name.toLowerCase() === s.name.toLowerCase())) {
+      reordered.push(s);
+    }
+  });
+
+  subjects = reordered;
   localStorage.setItem('omnistudy_subjects', JSON.stringify(subjects));
   renderSubjectTiles();
   if (toastFn) {
@@ -2639,6 +2923,7 @@ function setupTileManagementControls() {
  */
 export function openSubjectWorkspace(subjectName) {
   activeSubject = subjectName;
+  activeBranchFilter = null;
   localStorage.setItem('omnistudy_active_subject', subjectName);
 
   const subjObj = subjects.find(s => s.name.toLowerCase() === subjectName.toLowerCase());
@@ -2650,6 +2935,7 @@ export function openSubjectWorkspace(subjectName) {
   }
 
   showWorkspaceView();
+  renderBranchBar();
 
   const subjectNotes = notes.filter(n => n.category.toLowerCase() === subjectName.toLowerCase());
 
@@ -2661,6 +2947,7 @@ export function openSubjectWorkspace(subjectName) {
       id: `note_${Date.now()}`,
       title: `${subjectName} Overview & Syllabus`,
       category: subjectName,
+      branch: '',
       content: `# ${subjectName} Study Documentation\n\nWelcome to your ${subjectName} documentation hub.\n\n### Key Topics\n1. \n2. \n\n### Formula & Concept Bank\n- `,
       tags: [subjectName.toLowerCase().replace(/\s+/g, '-'), 'overview'],
       voice_memos: [],
@@ -2674,6 +2961,100 @@ export function openSubjectWorkspace(subjectName) {
   }
 
   renderNotesList();
+}
+
+/**
+ * Open specific note inside subject workspace (called from Brancher View)
+ */
+export function openNoteInWorkspace(subjectName, noteId = null) {
+  if (!subjectName) return;
+
+  const saved = localStorage.getItem('omnistudy_notes');
+  if (saved) {
+    try { notes = JSON.parse(saved); } catch {}
+  }
+
+  openSubjectWorkspace(subjectName);
+
+  if (noteId) {
+    const targetNote = notes.find(n => n.id === noteId);
+    if (targetNote) {
+      activeNoteId = noteId;
+      loadNoteIntoEditor(targetNote);
+      renderBranchBar();
+      renderNotesList();
+    }
+  }
+}
+
+/**
+ * Render Topic Branch Filter Bar inside Subject Workspace
+ */
+export function renderBranchBar() {
+  const container = document.getElementById('subject-branch-pills');
+  if (!container || !activeSubject) return;
+
+  const subjectBranches = getBranchesForSubject(activeSubject);
+  const subjectNotes = notes.filter(n => n.category.toLowerCase() === activeSubject.toLowerCase());
+
+  const allCount = subjectNotes.length;
+  const unbranchedCount = subjectNotes.filter(n => !n.branch).length;
+
+  let html = `
+    <button type="button" class="branch-pill-btn ${(!activeBranchFilter || activeBranchFilter === 'all') ? 'active' : ''}" data-branch="all">
+      All <span class="pill-badge">${allCount}</span>
+    </button>
+  `;
+
+  subjectBranches.forEach(b => {
+    const count = subjectNotes.filter(n => (n.branch || '').toLowerCase() === b.name.toLowerCase()).length;
+    const isAct = activeBranchFilter && activeBranchFilter.toLowerCase() === b.name.toLowerCase();
+    html += `
+      <button type="button" class="branch-pill-btn ${isAct ? 'active' : ''}" data-branch="${escapeHtml(b.name)}">
+        <span class="pill-icon">${b.icon || '🌿'}</span>
+        <span>${escapeHtml(b.name)}</span>
+        <span class="pill-badge">${count}</span>
+      </button>
+    `;
+  });
+
+  if (unbranchedCount > 0 && subjectBranches.length > 0) {
+    const isAct = activeBranchFilter === '__unbranched__';
+    html += `
+      <button type="button" class="branch-pill-btn ${isAct ? 'active' : ''}" data-branch="__unbranched__" title="Notes not assigned to a branch">
+        <span>General</span>
+        <span class="pill-badge">${unbranchedCount}</span>
+      </button>
+    `;
+  }
+
+  container.innerHTML = html;
+
+  container.querySelectorAll('.branch-pill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const b = btn.dataset.branch;
+      activeBranchFilter = (b === 'all') ? null : b;
+      renderBranchBar();
+      renderNotesList();
+    });
+  });
+}
+
+/**
+ * Populate Branch dropdown selector in note editor
+ */
+function populateEditorBranchSelect(selectedBranchName = '') {
+  const branchSelect = document.getElementById('note-edit-branch');
+  if (!branchSelect || !activeSubject) return;
+
+  const subjectBranches = getBranchesForSubject(activeSubject);
+  let html = `<option value="">General (No Branch)</option>`;
+  subjectBranches.forEach(b => {
+    const isSelected = selectedBranchName && selectedBranchName.toLowerCase() === b.name.toLowerCase();
+    html += `<option value="${escapeHtml(b.name)}" ${isSelected ? 'selected' : ''}>${b.icon || '🌿'} ${escapeHtml(b.name)}</option>`;
+  });
+  html += `<option value="__new_branch__">+ Add new branch...</option>`;
+  branchSelect.innerHTML = html;
 }
 
 function showSubjectsView() {
@@ -2819,28 +3200,42 @@ function renderNotesList() {
     const matchesSearch = !search || 
       n.title.toLowerCase().includes(search) || 
       n.content.toLowerCase().includes(search) ||
+      (n.branch && n.branch.toLowerCase().includes(search)) ||
       n.tags.some(t => t.toLowerCase().includes(search));
-    return matchesSubject && matchesSearch;
+
+    let matchesBranch = true;
+    if (activeBranchFilter && activeBranchFilter !== 'all') {
+      if (activeBranchFilter === '__unbranched__') {
+        matchesBranch = !n.branch;
+      } else {
+        matchesBranch = (n.branch || '').toLowerCase() === activeBranchFilter.toLowerCase();
+      }
+    }
+    return matchesSubject && matchesSearch && matchesBranch;
   });
 
   if (filtered.length === 0) {
+    const filterMsg = activeBranchFilter && activeBranchFilter !== 'all'
+      ? ` in branch "${activeBranchFilter === '__unbranched__' ? 'General' : activeBranchFilter}"`
+      : '';
     container.innerHTML = `
       <div style="color: var(--text-muted); font-size: 0.82rem; padding: 18px 12px; text-align: center;">
-        No notes found in ${escapeHtml(activeSubject)}. Click <strong>+ New Note</strong> to create one.
+        No notes found${filterMsg} in ${escapeHtml(activeSubject)}. Click <strong>+ New Note</strong> to create one.
       </div>
     `;
     return;
   }
 
   container.innerHTML = filtered.map(n => `
-    <div class="note-item-card ${n.id === activeNoteId ? 'active' : ''}" data-id="${n.id}" draggable="true">
+    <div class="note-item-card ${n.id === activeNoteId ? 'active' : ''}" data-id="${n.id}">
       <div class="note-item-header">
         <div class="note-item-title">${escapeHtml(n.title)}</div>
         <span class="note-drag-handle" title="Drag to reposition">⠿</span>
       </div>
       <div class="note-item-snippet">${escapeHtml(stripHtmlTags(n.content).substring(0, 80))}</div>
       <div class="note-item-meta">
-        <span class="note-tag-badge">${n.category}</span>
+        <span class="note-tag-badge">${escapeHtml(n.category)}</span>
+        ${n.branch ? `<span class="note-branch-badge" title="Topic Branch: ${escapeHtml(n.branch)}">🌿 ${escapeHtml(n.branch)}</span>` : ''}
         <span>${new Date(n.updated_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
       </div>
     </div>
@@ -2849,82 +3244,126 @@ function renderNotesList() {
   container.querySelectorAll('.note-item-card').forEach(card => {
     const id = card.dataset.id;
 
-    // Normal click opens/selects note (unless currently dragging)
-    card.addEventListener('click', () => {
-      if (isDraggingNote) return;
-      activeNoteId = id;
-      renderNotesList();
-      const note = notes.find(n => n.id === id);
-      if (note) loadNoteIntoEditor(note);
-    });
+    // Pointer-based fluid drag-and-drop & click handler
+    card.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest('button, input, select, textarea, a')) return;
 
-    // Drag-and-drop repositioning
-    card.addEventListener('dragstart', (e) => {
-      draggedNoteId = id;
-      isDraggingNote = true;
-      card.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', id);
-    });
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const cardRect = card.getBoundingClientRect();
+      const grabOffsetX = startX - cardRect.left;
+      const grabOffsetY = startY - cardRect.top;
 
-    card.addEventListener('dragend', () => {
-      draggedNoteId = null;
-      card.classList.remove('dragging');
-      container.querySelectorAll('.note-item-card').forEach(c => {
-        c.classList.remove('drop-indicator-top', 'drop-indicator-bottom');
-      });
-      setTimeout(() => { isDraggingNote = false; }, 60);
-    });
+      let isDragging = false;
+      let avatar = null;
+      let placeholder = null;
 
-    card.addEventListener('dragover', (e) => {
-      if (!draggedNoteId || draggedNoteId === id) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
+      function onPointerMove(moveEvent) {
+        const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+        if (!isDragging && dist > 5) {
+          isDragging = true;
 
-      const rect = card.getBoundingClientRect();
-      const relY = e.clientY - rect.top;
-      const isTop = relY < rect.height / 2;
+          // Placeholder element occupies space in the list
+          placeholder = document.createElement('div');
+          placeholder.className = 'note-drag-placeholder';
+          placeholder.style.width = `${cardRect.width}px`;
+          placeholder.style.height = `${cardRect.height}px`;
 
-      card.classList.toggle('drop-indicator-top', isTop);
-      card.classList.toggle('drop-indicator-bottom', !isTop);
-    });
+          // Avatar follows pointer
+          avatar = card.cloneNode(true);
+          avatar.className = `${card.className} tile-drag-avatar`;
+          avatar.style.width = `${cardRect.width}px`;
+          avatar.style.height = `${cardRect.height}px`;
+          avatar.style.left = `${moveEvent.clientX - grabOffsetX}px`;
+          avatar.style.top = `${moveEvent.clientY - grabOffsetY}px`;
+          document.body.appendChild(avatar);
 
-    card.addEventListener('dragleave', (e) => {
-      if (!card.contains(e.relatedTarget)) {
-        card.classList.remove('drop-indicator-top', 'drop-indicator-bottom');
+          card.parentNode.insertBefore(placeholder, card);
+          card.style.display = 'none';
+          document.body.style.userSelect = 'none';
+        }
+
+        if (isDragging && avatar && placeholder) {
+          avatar.style.left = `${moveEvent.clientX - grabOffsetX}px`;
+          avatar.style.top = `${moveEvent.clientY - grabOffsetY}px`;
+
+          // Find hovered sibling note item card
+          const siblings = Array.from(container.querySelectorAll('.note-item-card')).filter(c => c !== card && c.style.display !== 'none');
+
+          for (const sibling of siblings) {
+            const rect = sibling.getBoundingClientRect();
+            if (moveEvent.clientY >= rect.top && moveEvent.clientY <= rect.bottom) {
+              const isAbove = moveEvent.clientY < rect.top + rect.height / 2;
+              const targetNode = isAbove ? sibling : sibling.nextSibling;
+
+              if (placeholder.nextSibling !== targetNode && placeholder !== targetNode) {
+                animateFLIP(container, () => {
+                  container.insertBefore(placeholder, targetNode);
+                });
+              }
+              break;
+            }
+          }
+        }
       }
-    });
 
-    card.addEventListener('drop', (e) => {
-      e.preventDefault();
-      card.classList.remove('drop-indicator-top', 'drop-indicator-bottom');
+      function onPointerUp() {
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        document.body.style.userSelect = '';
 
-      const sourceId = draggedNoteId || e.dataTransfer.getData('text/plain');
-      const targetId = id;
+        if (isDragging) {
+          if (placeholder && placeholder.parentNode) {
+            placeholder.parentNode.insertBefore(card, placeholder);
+            placeholder.remove();
+          }
+          card.style.display = '';
+          if (avatar) avatar.remove();
 
-      if (!sourceId || sourceId === targetId) return;
+          const reorderedIds = Array.from(container.querySelectorAll('.note-item-card'))
+            .map(el => el.dataset.id)
+            .filter(Boolean);
 
-      const rect = card.getBoundingClientRect();
-      const relY = e.clientY - rect.top;
-      const placeAbove = relY < rect.height / 2;
+          applyNewNoteOrder(reorderedIds);
+        } else {
+          // Normal click without drag opens note
+          activeNoteId = id;
+          renderNotesList();
+          const note = notes.find(n => n.id === id);
+          if (note) loadNoteIntoEditor(note);
+        }
+      }
 
-      reorderNotes(sourceId, targetId, placeAbove);
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
     });
   });
 }
 
-function reorderNotes(sourceId, targetId, placeAbove) {
-  const fromIndex = notes.findIndex(n => n.id === sourceId);
-  if (fromIndex === -1) return;
+function applyNewNoteOrder(reorderedIds) {
+  if (!reorderedIds || reorderedIds.length === 0 || !activeSubject) return;
 
-  const [movedNote] = notes.splice(fromIndex, 1);
-  const toIndex = notes.findIndex(n => n.id === targetId);
-  if (toIndex === -1) {
-    notes.push(movedNote);
-  } else {
-    const insertIndex = placeAbove ? toIndex : toIndex + 1;
-    notes.splice(insertIndex, 0, movedNote);
-  }
+  const subjectNotesMap = new Map();
+  notes.forEach(n => {
+    if (n.category.toLowerCase() === activeSubject.toLowerCase()) {
+      subjectNotesMap.set(n.id, n);
+    }
+  });
+
+  const orderedSubjectNotes = reorderedIds
+    .map(id => subjectNotesMap.get(id))
+    .filter(Boolean);
+
+  let subjIdx = 0;
+  notes = notes.map(n => {
+    if (n.category.toLowerCase() === activeSubject.toLowerCase()) {
+      const repl = orderedSubjectNotes[subjIdx] || n;
+      subjIdx++;
+      return repl;
+    }
+    return n;
+  });
 
   saveNotes();
   renderNotesList();
@@ -2954,9 +3393,13 @@ function loadNoteIntoEditor(note) {
   if (category) category.value = note.category;
   if (content) {
     content.innerHTML = formatToRichHtml(note.content);
+    content.scrollTop = 0;
+    document.querySelector('.workspace-content')?.scrollTo({ top: 0 });
     updateToolbarButtonStates();
   }
   if (tags) tags.value = (note.tags || []).join(', ');
+
+  populateEditorBranchSelect(note.branch || '');
 
   if (isNotePreviewMode) {
     renderNotePreview();
@@ -2974,9 +3417,11 @@ function clearEditor() {
   const title = document.getElementById('note-edit-title');
   const content = document.getElementById('note-edit-content');
   const tags = document.getElementById('note-edit-tags');
+  const branchSelect = document.getElementById('note-edit-branch');
   if (title) title.value = '';
   if (content) content.innerHTML = '';
   if (tags) tags.value = '';
+  if (branchSelect) branchSelect.value = '';
 
   const preview = document.getElementById('note-preview-content');
   if (preview) preview.innerHTML = '';
@@ -3007,6 +3452,11 @@ function triggerAutoSave(onNoteChange) {
       localStorage.setItem('omnistudy_subjects', JSON.stringify(subjects));
     }
     note.category = newCategory;
+
+    const branchVal = document.getElementById('note-edit-branch')?.value || '';
+    if (branchVal !== '__new_branch__') {
+      note.branch = branchVal;
+    }
 
     const editor = document.getElementById('note-edit-content');
     note.content = editor ? editor.innerHTML : '';
@@ -3039,6 +3489,7 @@ function saveNotes() {
   }
 
   populateNoteImportDropdown();
+  window.dispatchEvent(new CustomEvent('omnistudy:notes-updated'));
 }
 
 function populateNoteImportDropdown() {

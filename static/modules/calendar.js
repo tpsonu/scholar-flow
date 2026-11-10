@@ -299,11 +299,7 @@ export function renderRemindersList() {
   const dayReminders = reminders.filter(r => r.event_date === selectedStr);
 
   if (dayReminders.length === 0) {
-    container.innerHTML = `
-      <div style="color: var(--text-muted); font-size: 0.85rem; padding: 18px 0; text-align: center;">
-        No reminders scheduled for this date. Use the form below to mark a study goal or deadline.
-      </div>
-    `;
+    container.innerHTML = '';
     return;
   }
 

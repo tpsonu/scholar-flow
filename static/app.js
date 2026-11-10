@@ -13,6 +13,8 @@ import { initLearningModule, updateTimerFloatingVisibility } from './modules/lea
 import { initPartnersModule } from './modules/partners.js';
 import { initCreatorsModule } from './modules/creators.js';
 import { initSettingsModule } from './modules/settings.js';
+import { initBrancherModule, renderBrancherView } from './modules/brancher.js';
+import { initBitsModule, renderBitsView } from './modules/bits.js';
 
 let activeViewId = 'view-dashboard';
 
@@ -31,7 +33,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Initialize modules
   initNotesModule(() => triggerAutoSaveIndicator(), showToast);
-  initVoiceModule((newMemo) => showToast(`✓ Voice memo "${newMemo.title}" saved!`));
+  initVoiceModule((newMemo) => showToast(`✓ Voice memo "${newMemo.title}" saved!`), showToast);
+  initBrancherModule(showToast);
   initPdfStudio();
   initPassportModule(() => triggerAutoSaveIndicator());
   initCalendarModule(showToast);
@@ -39,6 +42,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   initPartnersModule(showToast);
   initCreatorsModule(showToast);
   initSettingsModule(showToast);
+  initBitsModule(showToast);
 
   // Setup sudden-close protection
   setupSuddenCloseProtection(collectCurrentLiveState);
@@ -95,6 +99,12 @@ export function switchView(viewId) {
   }
   if (viewId === 'view-notes') {
     setTimeout(renderSubjectTiles, 10);
+  }
+  if (viewId === 'view-brancher') {
+    setTimeout(renderBrancherView, 10);
+  }
+  if (viewId === 'view-bits') {
+    setTimeout(renderBitsView, 10);
   }
 
   // Update persistent floating timer visibility across tabs

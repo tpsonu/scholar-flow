@@ -19,8 +19,10 @@ let timerInterval = null;
 
 // Stored voice memos list in memory
 let voiceMemos = [];
+let toastFn = null;
 
-export function initVoiceModule(onNewMemoSaved) {
+export function initVoiceModule(onNewMemoSaved, showToast = null) {
+  toastFn = showToast;
   const recordBtn = document.getElementById('voice-record-toggle-btn');
   const discardBtn = document.getElementById('voice-discard-btn');
   const saveBtn = document.getElementById('voice-save-btn');
@@ -83,10 +85,16 @@ export function initVoiceModule(onNewMemoSaved) {
 async function startRecording() {
   audioChunks = [];
   try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('navigator.mediaDevices.getUserMedia is unavailable in this environment.');
+    }
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     handleAudioStream(stream);
   } catch (err) {
     console.warn('Microphone permission denied or unavailable. Using synthesized audio studio simulator.', err);
+    if (toastFn) {
+      toastFn('⚠️ Mic blocked by IDE preview! Open in regular browser (http://localhost:8080) to record real voice.', 'warning');
+    }
     startSimulatedRecording();
   }
 }
@@ -111,7 +119,7 @@ function handleAudioStream(stream) {
   };
 
   mediaRecorder.start();
-  setRecordingActiveUI();
+  setRecordingActiveUI(false);
   drawWaveform();
 }
 
@@ -129,7 +137,7 @@ function startSimulatedRecording() {
   gain.connect(analyser);
   osc.start();
 
-  setRecordingActiveUI();
+  setRecordingActiveUI(true);
   drawWaveform();
 
   // Create a simulated 3-second audio tone blob
@@ -179,7 +187,7 @@ export function createSynthesizedAudioBlob() {
   return new Blob([buffer], { type: 'audio/wav' });
 }
 
-function setRecordingActiveUI() {
+function setRecordingActiveUI(isSimulated = false) {
   isRecording = true;
   recordStartTime = Date.now();
   const recordBtn = document.getElementById('voice-record-toggle-btn');
@@ -190,7 +198,13 @@ function setRecordingActiveUI() {
     recordBtn.classList.add('recording');
     recordBtn.innerHTML = '⏹';
   }
-  if (statusElem) statusElem.textContent = 'Recording in progress... Click stop when finished.';
+  if (statusElem) {
+    if (isSimulated) {
+      statusElem.innerHTML = '<span style="color: #f59e0b; font-weight: 600;">⚠️ Test simulation (Mic blocked by IDE preview).</span> Open <a href="http://localhost:8080" target="_blank" style="color: var(--primary); text-decoration: underline;">http://localhost:8080</a> in Chrome/Firefox for your real mic.';
+    } else {
+      statusElem.textContent = '🎙️ Recording live microphone... Click stop when finished.';
+    }
+  }
   if (controlsPane) controlsPane.style.display = 'none';
 
   // Timer
