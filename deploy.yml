@@ -1,0 +1,145 @@
+name: Deploy Scholar Flow to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Package application
+        run: |
+          tar -czf "$RUNNER_TEMP/scholar-flow.tar.gz" \
+            --exclude='.git' \
+            --exclude='_pycache_' \
+            --exclude='*.pyc' \
+            --exclude='*-wal' \
+            --exclude='*-shm' \
+            .
+
+      - name: Configure SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2_key
+          chmod 600 ~/.ssh/ec2_key
+
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      - name: Transfer application to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          scp -i ~/.ssh/ec2_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$RUNNER_TEMP/scholar-flow.tar.gz" \
+            "$EC2_USER@$EC2_HOST:/tmp/scholar-flow.tar.gz"
+
+      - name: Configure server and deploy
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          ssh -i ~/.ssh/ec2_key \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" 'bash -s' <<'REMOTE'
+
+          set -e
+
+          APP_DIR="/opt/scholar-flow"
+          DB_DIR="/var/lib/scholar-flow"
+          STAGING_DIR="$(mktemp -d /tmp/scholar-flow.XXXXXX)"
+
+          trap 'rm -rf "$STAGING_DIR" /tmp/scholar-flow.tar.gz' EXIT
+
+          echo "Installing required packages..."
+          sudo dnf install -y python3 rsync
+
+          echo "Creating application directories..."
+          sudo install -d -o ec2-user -g ec2-user "$APP_DIR"
+          sudo install -d -o ec2-user -g ec2-user "$DB_DIR"
+          sudo install -d -o ec2-user -g ec2-user /var/log/scholar-flow
+
+          echo "Extracting application files..."
+          tar -xzf /tmp/scholar-flow.tar.gz -C "$STAGING_DIR"
+
+          echo "Preserving existing database..."
+          if [ ! -f "$DB_DIR/database.db" ]; then
+              if [ -f "$APP_DIR/database.db" ] && [ ! -L "$APP_DIR/database.db" ]; then
+                  sudo install -o ec2-user -g ec2-user \
+                    "$APP_DIR/database.db" "$DB_DIR/database.db"
+              elif [ -f "$STAGING_DIR/database.db" ]; then
+                  sudo install -o ec2-user -g ec2-user \
+                    "$STAGING_DIR/database.db" "$DB_DIR/database.db"
+              fi
+          fi
+
+          echo "Deploying application files..."
+          sudo rsync -a --delete \
+            --exclude='database.db' \
+            "$STAGING_DIR/" "$APP_DIR/"
+
+          sudo rm -f "$APP_DIR/database.db"
+          sudo ln -s "$DB_DIR/database.db" "$APP_DIR/database.db"
+
+          sudo chown -R ec2-user:ec2-user "$APP_DIR"
+          sudo chown -R ec2-user:ec2-user "$DB_DIR"
+
+          echo "Creating systemd service..."
+          sudo tee /etc/systemd/system/scholar-flow.service > /dev/null <<'UNIT'
+          [Unit]
+          Description=Scholar Flow Application
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=ec2-user
+          WorkingDirectory=/opt/scholar-flow
+          Environment=PYTHONUNBUFFERED=1
+          Environment=SCHOLAR_FLOW_DB_PATH=/var/lib/scholar-flow/database.db
+          ExecStart=/usr/bin/python3 /opt/scholar-flow/server.py
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          echo "Configuring firewall..."
+          if sudo systemctl is-active --quiet firewalld; then
+              sudo firewall-cmd --permanent --add-port=8080/tcp
+              sudo firewall-cmd --reload
+          fi
+
+          echo "Starting Scholar Flow..."
+          sudo systemctl daemon-reload
+          sudo systemctl enable scholar-flow
+          sudo systemctl restart scholar-flow
+
+          sleep 3
+
+          echo "Checking application status..."
+          sudo systemctl is-active --quiet scholar-flow
+
+          echo "Deployment completed successfully!"
+          sudo systemctl status scholar-flow --no-pager
+
+          REMOTE
