@@ -17,7 +17,10 @@ from datetime import datetime
 PORT = 8080
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
-DB_PATH = os.path.join(BASE_DIR, "database.db")
+DB_PATH = os.environ.get(
+    "SCHOLAR_FLOW_DB_PATH",
+    os.path.join(BASE_DIR, "database.db")
+)
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
